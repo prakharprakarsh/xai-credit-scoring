@@ -1,4 +1,4 @@
-# 🏦 XAI Credit Scoring — Explainable & Fair Credit Risk Assessment
+#  XAI Credit Scoring — Explainable & Fair Credit Risk Assessment
 
 > **EU AI Act Compliant** · Fairness Auditing · SHAP/LIME Explainability · Bias Mitigation
 
