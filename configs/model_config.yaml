@@ -1,0 +1,67 @@
+model:
+  algorithm: "xgboost"
+  xgboost:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_weight: 5
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    scale_pos_weight: 1.0
+    eval_metric: "auc"
+    early_stopping_rounds: 50
+    random_state: 42
+  lightgbm:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_samples: 20
+    reg_alpha: 0.1
+    reg_lambda: 1.0
+    random_state: 42
+
+training:
+  test_size: 0.2
+  validation_size: 0.15
+  cv_folds: 5
+  stratify: true
+  random_state: 42
+
+tuning:
+  enabled: true
+  n_trials: 100
+  timeout: 3600
+  metric: "roc_auc"
+  direction: "maximize"
+
+thresholds:
+  approve: 0.7
+  deny: 0.3
+
+features:
+  excluded:
+    - "gender"
+    - "ethnicity"
+    - "marital_status"
+  numeric:
+    - "age"
+    - "income"
+    - "loan_amount"
+    - "loan_duration_months"
+    - "existing_credits"
+    - "num_dependents"
+    - "residence_duration_years"
+    - "employment_duration_years"
+    - "debt_to_income_ratio"
+    - "savings_balance"
+    - "checking_balance"
+  categorical:
+    - "employment_status"
+    - "housing_type"
+    - "loan_purpose"
+    - "education_level"
+    - "credit_history_status"

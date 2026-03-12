@@ -1,0 +1,57 @@
+protected_attributes:
+  gender:
+    type: "binary"
+    privileged_group: "male"
+    unprivileged_group: "female"
+  age_group:
+    type: "categorical"
+    privileged_group: "30-50"
+    unprivileged_groups: ["18-29", "51-65", "65+"]
+  ethnicity:
+    type: "categorical"
+    privileged_group: "dutch"
+    unprivileged_groups: ["other_european", "non_european"]
+    note: "Proxy detection enabled — direct use prohibited"
+
+thresholds:
+  demographic_parity_ratio:
+    value: 0.80
+    description: "4/5ths rule"
+    severity: "BLOCK"
+  equalized_odds_difference:
+    value: 0.10
+    description: "Max TPR difference"
+    severity: "BLOCK"
+  disparate_impact_ratio:
+    value: 0.80
+    description: "4/5ths rule"
+    severity: "BLOCK"
+  predictive_parity_difference:
+    value: 0.10
+    severity: "WARN"
+  calibration_difference:
+    value: 0.05
+    severity: "WARN"
+
+mitigation:
+  reweighing:
+    enabled: true
+  fairness_constraint:
+    enabled: false
+    method: "demographic_parity"
+    constraint_weight: 0.5
+  threshold_optimization:
+    enabled: true
+    method: "equalized_odds"
+
+proxy_detection:
+  enabled: true
+  correlation_threshold: 0.30
+  mutual_info_threshold: 0.10
+
+monitoring:
+  audit_frequency: "weekly"
+  drift_threshold: 0.05
+  alert_channels:
+    - "email"
+    - "slack"
