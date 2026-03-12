@@ -1,0 +1,41 @@
+name: CI — XAI Credit Scoring
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run model tests
+        run: pytest tests/test_model.py -v --tb=short
+      - name: Run explainability tests
+        run: pytest tests/test_explainability.py -v --tb=short
+      - name: Run API tests
+        run: pytest tests/test_api.py -v --tb=short
+      - name: Run robustness tests
+        run: pytest tests/test_robustness.py -v --tb=short
+      - name: "FAIRNESS GATE — EU AI Act Compliance"
+        run: |
+          echo "=========================================="
+          echo "  FAIRNESS GATE — EU AI Act Art. 9"
+          echo "  Deployment BLOCKED if any test fails"
+          echo "=========================================="
+          pytest tests/test_fairness.py -v --tb=long
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=src --cov-report=xml --cov-report=term-missing
