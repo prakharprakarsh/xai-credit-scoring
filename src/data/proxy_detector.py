@@ -1,4 +1,4 @@
-"""Proxy Variable Detector — EU AI Act Data Governance."""
+"""Flags features that correlate with protected attributes (possible proxies)."""
 
 import logging
 from dataclasses import dataclass, field

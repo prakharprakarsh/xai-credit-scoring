@@ -1,11 +1,9 @@
-"""LIME Explainer — Local Interpretable Model-Agnostic Explanations."""
+"""LIME wrapper, mainly as a cross-check on the SHAP explanations."""
 
 import logging
-from typing import Optional
 
 import lime
 import lime.lime_tabular
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)

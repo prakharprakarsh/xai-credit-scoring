@@ -1,4 +1,4 @@
-"""Data Preprocessor — Feature engineering and encoding."""
+"""Feature engineering + scaling/encoding. Protected attributes are dropped from model inputs but can be kept alongside for auditing."""
 
 import logging
 from typing import Optional

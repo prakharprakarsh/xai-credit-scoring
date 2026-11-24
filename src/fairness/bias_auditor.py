@@ -1,11 +1,10 @@
-"""Bias Auditor — Comprehensive Fairness Analysis. EU AI Act Article 9."""
+"""Group fairness metrics for a fitted credit model (DPR, DIR, equalized odds, PPV and calibration gaps)."""
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from pathlib import Path
 
-import numpy as np
-import pandas as pd
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +19,12 @@ class FairnessMetric:
     group_a: str
     group_b: str
     protected_attribute: str
+    note: str = ""
 
     def __str__(self):
         status = "PASS" if self.passed else "FAIL"
-        return f"{status} {self.name}: {self.value:.4f} (threshold: {self.threshold}, {self.protected_attribute}: {self.group_a} vs {self.group_b})"
+        s = f"{status} {self.name}: {self.value:.4f} (threshold: {self.threshold}, {self.protected_attribute}: {self.group_a} vs {self.group_b})"
+        return f"{s} [{self.note}]" if self.note else s
 
 
 @dataclass
@@ -60,22 +61,42 @@ class FairnessReport:
         return "\n".join(lines)
 
 
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "fairness_config.yaml"
+
+
+def load_config(path: Path = CONFIG_PATH) -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def load_thresholds(path: Path = CONFIG_PATH) -> dict:
+    """Read metric thresholds from the fairness config (single source of truth)."""
+    cfg = load_config(path)
+    return {name: {"value": t["value"], "severity": t.get("severity", "WARN")} for name, t in cfg["thresholds"].items()}
+
+
 class BiasAuditor:
+    # fallback only, used if the config file is missing
     DEFAULT_THRESHOLDS = {
         "demographic_parity_ratio": {"value": 0.80, "severity": "BLOCK"},
-        "equalized_odds_difference": {"value": 0.30, "severity": "BLOCK"},
+        "equalized_odds_difference": {"value": 0.10, "severity": "BLOCK"},
         "disparate_impact_ratio": {"value": 0.80, "severity": "BLOCK"},
         "predictive_parity_difference": {"value": 0.10, "severity": "WARN"},
         "calibration_difference": {"value": 0.05, "severity": "WARN"},
     }
 
-    def __init__(self, model, test_data, test_labels, protected_attributes, reference_groups=None, thresholds=None):
+    def __init__(self, model, test_data, test_labels, protected_attributes, reference_groups=None, thresholds=None, min_group_size=None):
         self.model = model
         self.test_data = test_data
         self.test_labels = test_labels
         self.protected_attributes = protected_attributes
         self.reference_groups = reference_groups or {}
-        self.thresholds = thresholds or self.DEFAULT_THRESHOLDS
+        if thresholds is None:
+            thresholds = load_thresholds() if CONFIG_PATH.exists() else self.DEFAULT_THRESHOLDS
+        self.thresholds = thresholds
+        if min_group_size is None:
+            min_group_size = load_config().get("min_group_size", 30) if CONFIG_PATH.exists() else 30
+        self.min_group_size = min_group_size
         numeric_data = test_data.select_dtypes(include='number')
         self.predictions = model.predict(numeric_data)
         self.probabilities = model.predict_proba(numeric_data)
@@ -116,6 +137,9 @@ class BiasAuditor:
         pred_a, pred_b = self.predictions[mask_a], self.predictions[mask_b]
         prob_a, prob_b = self.probabilities[mask_a], self.probabilities[mask_b]
         metrics = []
+        # smallest outcome-class count across the two groups
+        n_min = min((y_a == 1).sum(), (y_a == 0).sum(), (y_b == 1).sum(), (y_b == 0).sum())
+        small = n_min < self.min_group_size
 
         # Demographic Parity Ratio
         rate_a, rate_b = pred_a.mean(), pred_b.mean()
@@ -133,7 +157,8 @@ class BiasAuditor:
         tpr_b = pred_b[y_b == 1].mean() if (y_b == 1).sum() > 0 else 0
         fpr_a = pred_a[y_a == 0].mean() if (y_a == 0).sum() > 0 else 0
         fpr_b = pred_b[y_b == 0].mean() if (y_b == 0).sum() > 0 else 0
-        eod = abs(tpr_a - tpr_b) + abs(fpr_a - fpr_b)
+        # same definition as fairlearn.metrics.equalized_odds_difference
+        eod = max(abs(tpr_a - tpr_b), abs(fpr_a - fpr_b))
         t = self.thresholds["equalized_odds_difference"]
         metrics.append(FairnessMetric("Equalized Odds Difference", eod, t["value"], eod <= t["value"], t["severity"], str(group_a), str(group_b), attr))
 
@@ -151,6 +176,10 @@ class BiasAuditor:
         t = self.thresholds["calibration_difference"]
         metrics.append(FairnessMetric("Calibration Difference", cal_diff, t["value"], cal_diff <= t["value"], t["severity"], str(group_a), str(group_b), attr))
 
+        if small:
+            for m in metrics:
+                m.severity = "WARN"
+                m.note = f"only {n_min} rows in smallest outcome class (< {self.min_group_size}); not blocking"
         return metrics
 
     def intersectional_audit(self, attributes):

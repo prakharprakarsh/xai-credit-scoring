@@ -1,23 +1,14 @@
-# EU AI Act Compliance Mapping
+# EU AI Act mapping
 
-## Risk Classification
-Credit scoring = **High-Risk AI System** (Annex III, Section 5b)
+Credit scoring of natural persons is listed as high-risk in Annex III, point 5(b). This repo is a technical prototype, not a compliance claim. The table shows which technical requirements it touches and what is missing.
 
-## Article-by-Article Implementation
+| Article | What the code does | Not covered |
+|---|---|---|
+| Art. 10 Data governance | Schema/missing-value/range checks (`data_validator.py`), proxy correlation scan (`proxy_detector.py`), group representation stats | Data provenance, collection process, real bias examination on real data |
+| Art. 12 Record-keeping | Every prediction and override is appended to `logs/audit.jsonl` | Retention, tamper-proofing |
+| Art. 13 Transparency | Per-decision SHAP top factors + text explanation in the API | Instructions for use for deployers |
+| Art. 14 Human oversight | Scores between 0.30 and 0.70 go to review; officers can override with a mandatory reason (`/override`) | Officer training, monitoring of override rates |
+| Art. 15 Accuracy & robustness | Test-set metrics, group fairness gate in CI, perturbation tests | Adversarial robustness, cybersecurity |
+| Art. 72 Post-market monitoring | Baseline snapshot in `logs/monitoring.jsonl` | Scheduled drift checks against live data |
 
-| Article | Requirement | Implementation |
-|---------|-------------|----------------|
-| Art. 9 | Risk Management | `src/fairness/bias_auditor.py` |
-| Art. 10 | Data Governance | `src/data/data_validator.py`, `src/data/proxy_detector.py` |
-| Art. 11 | Technical Documentation | `docs/model_card.md`, this document |
-| Art. 12 | Record-keeping | `src/api/server.py` audit endpoints |
-| Art. 13 | Transparency | `src/explainability/` (SHAP, LIME, counterfactual) |
-| Art. 14 | Human Oversight | `src/dashboard/app.py` with override capability |
-| Art. 15 | Accuracy & Robustness | `tests/test_robustness.py` |
-| Art. 17 | Quality Management | `.github/workflows/ci.yml` with fairness gates |
-| Art. 61 | Post-market Monitoring | `src/fairness/monitoring.py` |
-
-## Dutch Regulatory Context
-- **DNB:** Algorithmic accountability aligned
-- **AFM:** Fair customer treatment (Klantbelang Centraal)
-- **Awgb:** Protected attributes match Dutch Equal Treatment Act
+Articles 9 (risk management) and 17 (quality management) are organisational processes and are out of scope.

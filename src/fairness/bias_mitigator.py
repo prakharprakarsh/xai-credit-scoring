@@ -1,9 +1,8 @@
-"""Bias Mitigator — Pre/In/Post-processing bias mitigation."""
+"""Reweighing (pre-processing) and per-group threshold tuning (post-processing)."""
 
 import logging
 
 import numpy as np
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 

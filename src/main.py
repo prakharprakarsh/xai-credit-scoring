@@ -1,18 +1,20 @@
-"""Main Pipeline — Orchestrates the complete XAI Credit Scoring workflow."""
+"""End-to-end run: data checks -> train -> explain -> fairness audit -> save.
 
+    python -m src.main
+"""
+
+import json
 import logging
-import sys
+from dataclasses import asdict
 from pathlib import Path
 
+import joblib
 import numpy as np
-import pandas as pd
 
 from src.data.data_loader import DataLoader
 from src.data.data_validator import DataValidator
 from src.data.preprocessor import CreditPreprocessor
 from src.data.proxy_detector import ProxyDetector
-from src.explainability.counterfactual import CounterfactualExplainer
-from src.explainability.lime_explainer import LIMEExplainer
 from src.explainability.shap_explainer import SHAPExplainer
 from src.fairness.bias_auditor import BiasAuditor
 from src.fairness.bias_mitigator import BiasMitigator
@@ -20,124 +22,93 @@ from src.fairness.monitoring import FairnessMonitor
 from src.fairness.report_generator import FairnessReportGenerator
 from src.models.credit_model import CreditScoringModel
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%H:%M:%S")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
+
+PROTECTED = ["gender", "age_group", "ethnicity"]
 
 
 def main():
-    logger.info("=" * 60)
-    logger.info("XAI CREDIT SCORING PIPELINE")
-    logger.info("EU AI Act Compliant — High-Risk AI System")
-    logger.info("=" * 60)
-
-    # Step 1: Load Data
-    logger.info("\n📥 STEP 1: Loading data...")
     loader = DataLoader(test_size=0.2, validation_size=0.15)
     raw_data = loader.load()
 
-    # Step 2: Validate Data (EU AI Act Art. 10)
-    logger.info("\n🔍 STEP 2: Validating data (EU AI Act Art. 10)...")
-    validator = DataValidator(protected_attributes=["gender", "age", "ethnicity"])
-    validation_report = validator.validate(raw_data)
+    # data checks before anything is trained
+    DataValidator(protected_attributes=["gender", "age", "ethnicity"]).validate(raw_data)
+    ProxyDetector(protected_attributes=["gender", "ethnicity", "marital_status"], correlation_threshold=0.30).detect(raw_data)
 
-    # Step 3: Detect Proxy Variables
-    logger.info("\n🔎 STEP 3: Detecting proxy variables...")
-    proxy_detector = ProxyDetector(protected_attributes=["gender", "ethnicity", "marital_status"], correlation_threshold=0.30)
-    proxy_report = proxy_detector.detect(raw_data)
-
-    # Step 4: Split Data
-    logger.info("\n✂️ STEP 4: Splitting data...")
     splits = loader.split(raw_data, target_col="credit_risk")
+    pre = CreditPreprocessor()
+    X_train, feature_names = pre.fit_transform(splits["X_train"], keep_protected=False)
+    X_val = pre.transform(splits["X_val"], keep_protected=False)
+    X_test = pre.transform(splits["X_test"], keep_protected=False)
+    train_prot = pre.transform(splits["X_train"], keep_protected=True)
+    val_prot = pre.transform(splits["X_val"], keep_protected=True)
+    test_prot = pre.transform(splits["X_test"], keep_protected=True)
 
-    # Step 5: Preprocess
-    logger.info("\n⚙️ STEP 5: Preprocessing features...")
-    preprocessor = CreditPreprocessor()
-    X_train_processed, feature_names = preprocessor.fit_transform(splits["X_train"], keep_protected=False)
-    X_val_processed = preprocessor.transform(splits["X_val"], keep_protected=False)
-    X_test_processed = preprocessor.transform(splits["X_test"], keep_protected=False)
-    X_test_with_protected = preprocessor.transform(splits["X_test"], keep_protected=True)
-
-    # Step 6: Bias Mitigation — Reweighing
-    logger.info("\n⚖️ STEP 6: Computing reweighing weights...")
-    X_train_with_protected = preprocessor.transform(splits["X_train"], keep_protected=True)
+    # reweighing (Kamiran & Calders): gender is not a model input, but it is
+    # used to weight training rows so each (gender, outcome) cell counts equally
     mitigator = BiasMitigator(protected_attribute="gender", reference_group="male")
-    if "gender" in X_train_with_protected.columns:
-        sample_weights = mitigator.compute_reweighing_weights(X_train_with_protected, splits["y_train"])
+    if "gender" in train_prot.columns:
+        weights = mitigator.compute_reweighing_weights(train_prot, splits["y_train"])
     else:
-        sample_weights = np.ones(len(X_train_processed))
+        weights = np.ones(len(X_train))
 
-    # Step 7: Train Model
-    logger.info("\n🤖 STEP 7: Training credit scoring model...")
     model = CreditScoringModel(approve_threshold=0.70, deny_threshold=0.30)
-    train_metrics = model.train(X_train_processed, splits["y_train"], X_val=X_val_processed, y_val=splits["y_val"], feature_names=feature_names)
+    model.train(X_train, splits["y_train"], X_val=X_val, y_val=splits["y_val"], feature_names=feature_names, sample_weight=weights)
+    test_metrics = model.evaluate(X_test, splits["y_test"])
 
-    # Step 8: Evaluate
-    logger.info("\n📈 STEP 8: Evaluating model...")
-    test_metrics = model.evaluate(X_test_processed, splits["y_test"])
+    explainer = SHAPExplainer(model=model.model, feature_names=feature_names)
+    explainer.fit(X_train)
+    logger.info("Top features by mean |SHAP|:\n%s", explainer.global_feature_importance(X_test).head())
+    logger.info("Example explanation:\n%s", explainer.explain_single(X_test.iloc[0])["explanation"])
 
-    # Step 9: Explainability (EU AI Act Art. 13)
-    logger.info("\n💡 STEP 9: Setting up explainability...")
-    shap_explainer = SHAPExplainer(model=model.model, feature_names=feature_names)
-    shap_explainer.fit(X_train_processed)
-    importance = shap_explainer.global_feature_importance(X_test_processed)
-    logger.info(f"Top 5 features:\n{importance.head()}")
+    # fairness audit on the held-out test set
+    attrs = [c for c in PROTECTED if c in test_prot.columns]
+    audit_df = X_test.copy()
+    for a in attrs:
+        audit_df[a] = test_prot[a].values
+    auditor = BiasAuditor(model=model, test_data=audit_df, test_labels=splits["y_test"], protected_attributes=attrs, reference_groups={"gender": "male", "age_group": "30-50"})
+    report = auditor.full_audit()
 
-    sample_applicant = X_test_processed.iloc[0]
-    explanation = shap_explainer.explain_single(sample_applicant)
-    logger.info(f"\nSample explanation:\n{explanation['explanation']}")
+    Path("reports").mkdir(exist_ok=True)
+    FairnessReportGenerator().generate_html(report, test_metrics, "reports/fairness_audit.html")
+    if report.passes_all_thresholds():
+        logger.info("Fairness gate: PASS")
+    else:
+        logger.warning("Fairness gate: FAIL\n%s", "\n".join(report.violations))
 
-    # Step 10: Fairness Audit (EU AI Act Art. 9)
-    logger.info("\n⚖️ STEP 10: Running fairness audit...")
-    protected_attrs_available = [col for col in ["gender", "age_group", "ethnicity"] if col in X_test_with_protected.columns]
+    # per-group decision thresholds, tuned on validation (not test) to avoid leakage
+    if "gender" in val_prot.columns:
+        thresholds = mitigator.optimize_thresholds(
+            probabilities=model.predict_proba(X_val), labels=splits["y_val"].values, groups=val_prot["gender"], method="equalized_odds"
+        )
+        logger.info("Per-group thresholds (equalized odds, tuned on val): %s", thresholds)
 
-    fairness_report = None
-    if protected_attrs_available:
-        test_data_for_audit = X_test_processed.copy()
-        for attr in protected_attrs_available:
-            if attr in X_test_with_protected.columns:
-                test_data_for_audit[attr] = X_test_with_protected[attr].values
+    out = Path("models/latest")
+    out.mkdir(parents=True, exist_ok=True)
+    model.save(str(out / "model.joblib"))
+    joblib.dump(pre, out / "preprocessor.joblib")
+    # metrics as JSON so the dashboard can show the real audit, not placeholders
+    (Path("reports") / "fairness_report.json").write_text(
+        json.dumps(
+            {
+                "test_metrics": {k: float(v) for k, v in test_metrics.items()},
+                "passes": report.passes_all_thresholds(),
+                "metrics": [{**asdict(m), "value": float(m.value), "passed": bool(m.passed)} for m in report.metrics],
+            },
+            indent=2,
+        )
+    )
 
-        auditor = BiasAuditor(model=model, test_data=test_data_for_audit, test_labels=splits["y_test"], protected_attributes=protected_attrs_available, reference_groups={"gender": "male", "age_group": "30-50"})
-        fairness_report = auditor.full_audit()
+    FairnessMonitor(log_path="logs/monitoring.jsonl").set_baseline(
+        {
+            "approval_rate": float(model.predict(X_test).mean()),
+            "mean_probability": float(model.predict_proba(X_test).mean()),
+            "metrics": test_metrics,
+        }
+    )
 
-        report_gen = FairnessReportGenerator()
-        Path("reports").mkdir(exist_ok=True)
-        report_gen.generate_html(fairness_report, test_metrics, "reports/fairness_audit.html")
-
-        if not fairness_report.passes_all_thresholds():
-            logger.warning("⚠️ FAIRNESS VIOLATIONS DETECTED")
-        else:
-            logger.info("✅ All fairness thresholds passed")
-
-    # Step 11: Threshold optimization
-    logger.info("\n🔧 STEP 11: Threshold optimization...")
-    if "gender" in X_test_with_protected.columns:
-        probabilities = model.predict_proba(X_test_processed)
-        optimized_thresholds = mitigator.optimize_thresholds(probabilities=probabilities, labels=splits["y_test"].values, groups=X_test_with_protected["gender"], method="equalized_odds")
-        logger.info(f"Optimized thresholds: {optimized_thresholds}")
-
-    # Step 12: Save Model
-    logger.info("\n💾 STEP 12: Saving model...")
-    Path("models/latest").mkdir(parents=True, exist_ok=True)
-    model.save("models/latest/model.joblib")
-
-    # Step 13: Monitoring
-    logger.info("\n📡 STEP 13: Initializing monitoring...")
-    monitor = FairnessMonitor(log_path="logs/monitoring.jsonl")
-    monitor.set_baseline({"approval_rate": float(model.predict(X_test_processed).mean()), "mean_probability": float(model.predict_proba(X_test_processed).mean()), "metrics": test_metrics})
-
-    # Done
-    logger.info("\n" + "=" * 60)
-    logger.info("✅ PIPELINE COMPLETE")
-    logger.info("=" * 60)
-    logger.info(f"Model AUC: {test_metrics['auc']:.4f}")
-    logger.info(f"Fairness: {'PASS' if fairness_report and fairness_report.passes_all_thresholds() else 'CHECK REPORT'}")
-    logger.info(f"Model saved to: models/latest/model.joblib")
-    logger.info(f"Fairness report: reports/fairness_audit.html")
-    logger.info(f"\nNext steps:")
-    logger.info(f"  - Start API: uvicorn src.api.server:app --reload")
-    logger.info(f"  - Start Dashboard: streamlit run src/dashboard/app.py")
-
+    logger.info("Test AUC %.4f | model -> models/latest/model.joblib | report -> reports/fairness_audit.html", test_metrics["auc"])
     return model, test_metrics
 
 

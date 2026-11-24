@@ -1,4 +1,4 @@
-"""Fairness Report Generator — Creates HTML audit reports."""
+"""Writes the fairness audit as a standalone HTML page."""
 
 import logging
 from datetime import datetime

@@ -1,4 +1,4 @@
-"""Hyperparameter Tuner — Optuna-based optimization."""
+"""Optuna search over the XGBoost parameters (optional, not used by src.main)."""
 
 import logging
 from typing import Optional

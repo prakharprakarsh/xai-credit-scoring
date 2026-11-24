@@ -1,92 +1,92 @@
-"""Loan Officer Dashboard — EU AI Act Article 14 (Human Oversight)."""
+"""Streamlit review screen for loan officers.
 
-import sys
+Reads the artifacts written by `python -m src.main`:
+    models/latest/{model,preprocessor}.joblib, reports/fairness_report.json, logs/audit.jsonl
 
-import numpy as np
+    streamlit run src/dashboard/app.py
+"""
+
+import json
+from pathlib import Path
+
+import joblib
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 
-try:
-    import streamlit as st
-except ImportError:
-    print("Streamlit not installed. Run: pip install streamlit")
-    sys.exit(1)
+from src.data.data_loader import generate_synthetic_credit_data
+from src.explainability.shap_explainer import SHAPExplainer
+from src.models.credit_model import CreditScoringModel
 
-st.set_page_config(page_title="XAI Credit Scoring", page_icon="🏦", layout="wide")
-st.sidebar.title("🏦 XAI Credit Scoring")
-st.sidebar.markdown("**EU AI Act Compliant**")
-page = st.sidebar.radio("Navigation", ["📋 Application Review", "📊 Fairness Dashboard", "📝 Audit Log", "ℹ️ About"])
+MODEL_DIR = Path("models/latest")
+REPORT = Path("reports/fairness_report.json")
+AUDIT_LOG = Path("logs/audit.jsonl")
 
-
-def load_sample_data():
-    np.random.seed(42)
-    n = 50
-    data = {
-        "applicant_id": [f"APP-{i:04d}" for i in range(n)],
-        "age": np.random.randint(22, 65, n),
-        "income": np.random.lognormal(10.5, 0.5, n).astype(int),
-        "loan_amount": np.random.lognormal(9.0, 0.7, n).astype(int),
-        "debt_to_income": np.random.uniform(0.1, 0.8, n).round(2),
-        "employment_years": np.random.exponential(5, n).round(1),
-        "credit_history": np.random.choice(["Excellent", "Good", "Fair", "Poor"], n, p=[0.25, 0.35, 0.25, 0.15]),
-        "probability": np.random.beta(5, 3, n).round(3),
-        "gender": np.random.choice(["Male", "Female"], n),
-        "age_group": np.random.choice(["18-29", "30-50", "51-65"], n, p=[0.25, 0.50, 0.25]),
-    }
-    df = pd.DataFrame(data)
-    df["decision"] = df["probability"].apply(lambda p: "APPROVED" if p >= 0.7 else ("DENIED" if p <= 0.3 else "REVIEW"))
-    df["risk_score"] = (300 + df["probability"] * 550).astype(int)
-    return df
+st.set_page_config(page_title="XAI Credit Scoring", layout="wide")
 
 
-if page == "📋 Application Review":
-    st.title("📋 Application Review")
-    df = load_sample_data()
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total", len(df))
-    col2.metric("Pending Review", len(df[df["decision"] == "REVIEW"]))
-    col3.metric("Auto-Approved", len(df[df["decision"] == "APPROVED"]))
-    col4.metric("Auto-Denied", len(df[df["decision"] == "DENIED"]))
-    for _, row in df.iterrows():
-        icon = {"APPROVED": "🟢", "DENIED": "🔴", "REVIEW": "🟡"}.get(row["decision"], "⚪")
-        with st.expander(f'{icon} {row["applicant_id"]} — Score: {row["risk_score"]} | {row["decision"]}'):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.write(f"**Age:** {row['age']}")
-                st.write(f"**Income:** €{row['income']:,.0f}")
-                st.write(f"**Loan:** €{row['loan_amount']:,.0f}")
-                st.write(f"**Probability:** {row['probability']:.1%}")
-            with c2:
-                np.random.seed(hash(row["applicant_id"]) % 2**31)
-                vals = {k: np.random.uniform(-0.2, 0.2) for k in ["income", "debt_to_income", "employment_years", "credit_history", "savings"]}
-                fig = go.Figure(go.Bar(x=list(vals.values()), y=list(vals.keys()), orientation="h", marker_color=["#22c55e" if v > 0 else "#ef4444" for v in vals.values()]))
-                fig.update_layout(title="SHAP Values", height=300, margin=dict(l=10, r=10, t=40, b=10))
-                st.plotly_chart(fig, use_container_width=True)
+@st.cache_resource
+def load():
+    model = CreditScoringModel.load(str(MODEL_DIR / "model.joblib"))
+    pre = joblib.load(MODEL_DIR / "preprocessor.joblib")
+    explainer = SHAPExplainer(model=model.model, feature_names=model.feature_names)
+    explainer.fit(None)
+    return model, pre, explainer
 
-elif page == "📊 Fairness Dashboard":
-    st.title("📊 Fairness Dashboard")
-    df = load_sample_data()
-    c1, c2 = st.columns(2)
-    with c1:
-        gr = df.groupby("gender")["probability"].mean()
-        fig = px.bar(x=gr.index, y=gr.values, labels={"x": "Gender", "y": "Mean Probability"}, title="By Gender", color=gr.index)
-        st.plotly_chart(fig, use_container_width=True)
-    with c2:
-        ar = df.groupby("age_group")["probability"].mean()
-        fig = px.bar(x=ar.index, y=ar.values, labels={"x": "Age Group", "y": "Mean Probability"}, title="By Age Group", color=ar.index)
-        st.plotly_chart(fig, use_container_width=True)
-    st.subheader("Fairness Metrics")
-    st.table(pd.DataFrame({"Metric": ["Demographic Parity (Gender)", "Disparate Impact (Gender)", "Equalized Odds (Gender)"], "Value": [0.92, 0.91, 0.06], "Threshold": [0.80, 0.80, 0.10], "Status": ["✅ Pass", "✅ Pass", "✅ Pass"]}))
 
-elif page == "📝 Audit Log":
-    st.title("📝 Audit Log")
-    st.dataframe(pd.DataFrame([
-        {"timestamp": "2025-01-15 09:23", "type": "prediction", "id": "APP-0012", "decision": "APPROVED", "officer": "—"},
-        {"timestamp": "2025-01-15 09:25", "type": "prediction", "id": "APP-0013", "decision": "REVIEW", "officer": "—"},
-        {"timestamp": "2025-01-15 09:31", "type": "override", "id": "APP-0013", "decision": "APPROVED", "officer": "J. de Vries"},
-    ]), use_container_width=True)
+@st.cache_data
+def applicants(n: int = 40) -> pd.DataFrame:
+    # fresh synthetic applicants (different seed from training)
+    return generate_synthetic_credit_data(n_samples=n, random_state=2024).drop(columns=["credit_risk"])
 
-elif page == "ℹ️ About":
-    st.title("ℹ️ About")
-    st.markdown("## XAI Credit Scoring\nEU AI Act compliant credit scoring with SHAP, LIME, counterfactual explanations and fairness auditing.")
+
+if not (MODEL_DIR / "model.joblib").exists():
+    st.error("No trained model found. Run `python -m src.main` first.")
+    st.stop()
+
+model, pre, explainer = load()
+page = st.sidebar.radio("Page", ["Review queue", "Fairness audit", "Decision log"])
+
+if page == "Review queue":
+    df = applicants()
+    X = pre.transform(df)
+    df = df.assign(probability=model.predict_proba(X))
+    df["decision"] = pd.cut(df["probability"], [-0.01, model.deny_threshold, model.approve_threshold, 1.01], labels=["DENIED", "REVIEW", "APPROVED"])
+
+    st.title("Review queue")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Needs review", int((df["decision"] == "REVIEW").sum()))
+    c2.metric("Auto-approved", int((df["decision"] == "APPROVED").sum()))
+    c3.metric("Auto-denied", int((df["decision"] == "DENIED").sum()))
+
+    only_review = st.checkbox("Show only REVIEW cases", value=True)
+    view = df[df["decision"] == "REVIEW"] if only_review else df
+    for idx, row in view.iterrows():
+        with st.expander(f"#{idx}  p={row['probability']:.2f}  {row['decision']}"):
+            left, right = st.columns([1, 2])
+            left.write(row[["age", "income", "loan_amount", "loan_duration_months", "employment_status", "credit_history_status", "housing_type"]].to_frame("value"))
+            exp = explainer.explain_single(X.loc[idx])
+            top = pd.DataFrame(exp["top_contributions"]).iloc[::-1]
+            fig = go.Figure(go.Bar(x=top["shap_value"], y=top["feature"], orientation="h", marker_color=["#2a9d8f" if v > 0 else "#e76f51" for v in top["shap_value"]]))
+            fig.update_layout(title="Top SHAP contributions (log-odds)", height=280, margin=dict(l=10, r=10, t=40, b=10))
+            right.plotly_chart(fig, use_container_width=True)
+            right.text(exp["explanation"])
+
+elif page == "Fairness audit":
+    st.title("Fairness audit (test set)")
+    if not REPORT.exists():
+        st.warning("No report yet - run `python -m src.main`.")
+        st.stop()
+    rep = json.loads(REPORT.read_text())
+    st.metric("Gate", "PASS" if rep["passes"] else "FAIL")
+    st.write({k: round(v, 3) for k, v in rep["test_metrics"].items()})
+    m = pd.DataFrame(rep["metrics"])[["protected_attribute", "group_a", "group_b", "name", "value", "threshold", "passed", "severity", "note"]]
+    st.dataframe(m.style.apply(lambda r: ["background-color: #fde2e1" if not r["passed"] else ""] * len(r), axis=1), use_container_width=True)
+
+else:
+    st.title("Decision log")
+    if not AUDIT_LOG.exists():
+        st.info("No decisions logged yet - call the API's /predict endpoint.")
+    else:
+        rows = [json.loads(line) for line in AUDIT_LOG.read_text().splitlines() if line.strip()]
+        st.dataframe(pd.DataFrame(rows).iloc[::-1], use_container_width=True)

@@ -1,4 +1,4 @@
-"""Counterfactual Explanations — 'What would need to change?'"""
+"""Simple counterfactuals: smallest single-feature change that flips the decision."""
 
 import logging
 from typing import Optional

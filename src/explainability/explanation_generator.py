@@ -1,4 +1,4 @@
-"""Explanation Generator — Combines SHAP, LIME, and counterfactuals. EU AI Act Article 13."""
+"""Combines SHAP, LIME and counterfactual output into one explanation dict."""
 
 import logging
 from typing import Optional

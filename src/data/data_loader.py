@@ -1,6 +1,8 @@
-"""
-Data loading and splitting utilities.
-Loads the German Credit-style dataset and prepares train/test/validation splits.
+"""Synthetic credit data generator and stratified train/val/test split.
+
+Columns loosely follow the German Credit dataset. Two small label biases are
+injected on purpose (some women and over-60s flipped to "bad") so the fairness
+checks have something to find.
 """
 
 import logging
@@ -16,8 +18,7 @@ logger = logging.getLogger(__name__)
 
 def generate_synthetic_credit_data(n_samples: int = 5000, random_state: int = 42) -> pd.DataFrame:
     """
-    Generate a synthetic credit scoring dataset for demonstration.
-    In production, replace this with your actual data loading logic.
+    Synthetic applicants with a hand-written scoring rule as the label.
     """
     rng = np.random.default_rng(random_state)
 

@@ -1,4 +1,4 @@
-"""Tests for Explainability — SHAP, Counterfactuals. EU AI Act Article 13."""
+"""SHAP and counterfactual tests."""
 
 import numpy as np
 import pytest
@@ -63,3 +63,11 @@ class TestCounterfactualExplainer:
         result = cf.generate(trained_pipeline["X_test"].iloc[0], trained_pipeline["model"].model)
         changed = [c["feature"] for c in result.get("changes_needed", [])]
         assert "age" not in changed
+
+
+def test_shap_explanation_matches_model_probability(trained_pipeline):
+    """SHAP is additive in log-odds: sigmoid(base + sum(shap)) must equal predict_proba."""
+    row = trained_pipeline["X_test"].iloc[[3]]
+    exp = trained_pipeline["shap"].explain_single(row)
+    model_p = trained_pipeline["model"].predict_proba(row)[0]
+    assert abs(exp["prediction_components"]["probability"] - model_p) < 1e-4

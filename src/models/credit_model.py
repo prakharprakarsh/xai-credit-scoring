@@ -1,9 +1,9 @@
-"""Credit Scoring Model — Core training and prediction."""
+"""XGBoost credit model with a three-way decision (approve / review / deny)."""
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 import joblib
 import numpy as np
@@ -35,7 +35,7 @@ class CreditScoringModel:
             "n_estimators": 500, "max_depth": 6, "learning_rate": 0.05,
             "subsample": 0.8, "colsample_bytree": 0.8, "min_child_weight": 5,
             "reg_alpha": 0.1, "reg_lambda": 1.0, "eval_metric": "auc",
-            "random_state": 42, "use_label_encoder": False,
+            "random_state": 42,
         }
         if model_params:
             default_params.update(model_params)
@@ -43,9 +43,11 @@ class CreditScoringModel:
         self.feature_names: list = []
         self._is_fitted = False
 
-    def train(self, X_train, y_train, X_val=None, y_val=None, feature_names=None) -> dict:
+    def train(self, X_train, y_train, X_val=None, y_val=None, feature_names=None, sample_weight=None) -> dict:
         self.feature_names = feature_names or list(X_train.columns)
         fit_params = {}
+        if sample_weight is not None:
+            fit_params["sample_weight"] = sample_weight
         if X_val is not None and y_val is not None:
             fit_params["eval_set"] = [(X_val, y_val)]
             fit_params["verbose"] = False

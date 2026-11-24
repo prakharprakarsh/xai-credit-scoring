@@ -13,6 +13,10 @@ protected_attributes:
     unprivileged_groups: ["other_european", "non_european"]
     note: "Proxy detection enabled — direct use prohibited"
 
+# groups with fewer rows than this in either outcome class are too noisy to
+# block on; failing checks for them are reported as warnings instead
+min_group_size: 30
+
 thresholds:
   demographic_parity_ratio:
     value: 0.80
@@ -20,7 +24,7 @@ thresholds:
     severity: "BLOCK"
   equalized_odds_difference:
     value: 0.10
-    description: "Max TPR difference"
+    description: "max(|TPR gap|, |FPR gap|)"
     severity: "BLOCK"
   disparate_impact_ratio:
     value: 0.80

@@ -1,4 +1,4 @@
-"""SHAP Explainer — Global and Local Explanations. EU AI Act Article 13."""
+"""TreeSHAP explanations: global importance and per-applicant breakdowns."""
 
 import logging
 from typing import Optional, Union
@@ -48,13 +48,16 @@ class SHAPExplainer:
             })
         contributions.sort(key=lambda x: x["abs_shap_value"], reverse=True)
 
-        explanation = self._generate_natural_language(contributions[:5], base_value, shap_values.sum())
+        # TreeExplainer on XGBoost works in log-odds space; convert back for the text
+        margin = float(base_value + shap_values.sum())
+        probability = 1.0 / (1.0 + np.exp(-margin))
+        explanation = self._generate_natural_language(contributions[:5], probability)
         return {
             "base_value": float(base_value),
             "shap_values": {c["feature"]: c["shap_value"] for c in contributions},
             "top_contributions": contributions[:5],
             "explanation": explanation,
-            "prediction_components": {"base_rate": float(base_value), "total_shap_effect": float(shap_values.sum()), "final_score": float(base_value + shap_values.sum())},
+            "prediction_components": {"base_log_odds": float(base_value), "total_shap_effect": float(shap_values.sum()), "log_odds": margin, "probability": probability},
         }
 
     def global_feature_importance(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -64,8 +67,7 @@ class SHAPExplainer:
         importance["rank"] = range(1, len(importance) + 1)
         return importance
 
-    def _generate_natural_language(self, top_factors, base_value, total_effect):
-        score = base_value + total_effect
+    def _generate_natural_language(self, top_factors, score):
         if score >= 0.7:
             decision_text = "Your application is APPROVED"
         elif score <= 0.3:
@@ -76,7 +78,7 @@ class SHAPExplainer:
         for i, factor in enumerate(top_factors[:3], 1):
             direction = "positively" if factor["shap_value"] > 0 else "negatively"
             feature_name = factor["feature"].replace("_", " ").title()
-            lines.append(f"  {i}. {feature_name} {direction} influenced your score (impact: {factor['shap_value']:+.3f})")
+            lines.append(f"  {i}. {feature_name} {direction} influenced your score (impact: {factor['shap_value']:+.3f} log-odds)")
         negative_factors = [f for f in top_factors if f["shap_value"] < 0]
         if negative_factors and score < 0.7:
             feature_name = negative_factors[0]["feature"].replace("_", " ").title()

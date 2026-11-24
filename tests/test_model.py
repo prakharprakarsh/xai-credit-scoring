@@ -1,4 +1,4 @@
-"""Tests for Credit Scoring Model."""
+"""Model training / prediction tests."""
 
 import numpy as np
 import pytest
