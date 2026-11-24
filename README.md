@@ -3,7 +3,7 @@
 An XGBoost credit model with per-decision SHAP explanations, a group-fairness audit that runs as a CI gate, bias mitigation, and a human-review path for borderline scores. Built to see what the EU AI Act's requirements for high-risk credit scoring (Annex III, 5(b)) look like in actual code.
 
 [![CI](https://github.com/prakharprakarsh/xai-credit-scoring/actions/workflows/ci.yml/badge.svg)](https://github.com/prakharprakarsh/xai-credit-scoring/actions/workflows/ci.yml)
-![python](https://img.shields.io/badge/python-3.10%E2%80%933.12-blue)
+![python](https://img.shields.io/badge/python-3.12-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 > Runs on **synthetic** data (5,000 applicants, German-Credit-style columns). Two biases are injected into the labels on purpose so the audit has something to find. Nothing here should be used on real people.
@@ -51,13 +51,20 @@ The audit fails equalized odds for age 65+ (0.20 vs a 0.10 limit). But that grou
 
 The honest fix is more data or a bootstrap confidence interval on the metric; that's next on the list.
 
+### The numbers depend on the library version
+
+Same seed, same data, same code: with XGBoost 3.4 the gender equalized-odds gap is **0.055**, with XGBoost 3.2 it's **0.131** and the gate fails. Small differences in tree building shift a few hundred borderline predictions, and with ~450 women in the test set that is enough to cross the line. Two takeaways:
+
+- CI installs exact versions from `requirements.lock.txt`, so the gate is reproducible
+- A single fairness number from one training run isn't very meaningful; it needs an interval (bootstrap over test rows, or several seeds)
+
 ## Quick start
 
 ```bash
 git clone https://github.com/prakharprakarsh/xai-credit-scoring.git
 cd xai-credit-scoring
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt   # exact versions (Python 3.12); requirements.txt has loose ranges
 
 python -m src.main                              # train, explain, audit, save artifacts
 uvicorn src.api.server:app --reload             # API on :8000 (docs at /docs)
@@ -94,7 +101,7 @@ Three pages, all reading the real artifacts from `src.main`: a review queue with
 pytest -q        # 38 tests
 ```
 
-CI runs the suite on Python 3.10–3.12, then runs `tests/test_fairness.py` as a separate step that fails on any blocking fairness violation.
+CI installs the lockfile on Python 3.12, runs the suite, then runs `tests/test_fairness.py` as a separate step that fails on any blocking fairness violation.
 
 ## Project layout
 
@@ -114,7 +121,7 @@ docs/              model card, EU AI Act mapping
 ## Limitations
 
 - Synthetic data and labels
-- Fairness metrics are point estimates, no confidence intervals
+- Fairness metrics are point estimates, no confidence intervals (and they move with the XGBoost version, see above)
 - Categoricals are ordinal-encoded; fine for trees, but SHAP factors are on encoded/scaled values
 - Per-group decision thresholds are computed (on validation) but not applied, since using gender at decision time is itself a legal problem in EU credit
 - Monitoring only records a baseline; no scheduled drift job

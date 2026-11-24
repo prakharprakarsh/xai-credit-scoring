@@ -7,5 +7,5 @@ setup(
     author="Prakhar Prakarsh",
     author_email="prakharprakarsh@gmail.com",
     packages=find_packages(),
-    python_requires=">=3.10",
+    python_requires=">=3.11",
 )
